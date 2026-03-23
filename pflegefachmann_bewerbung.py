@@ -10,7 +10,11 @@ from duckduckgo_search import DDGS
 import requests
 import re
 from PyPDF2 import PdfMerger
+import fitz  # PyMuPDF for compression
+import pandas as pd
 from dotenv import load_dotenv
+from datetime import datetime
+import google.generativeai as genai
 
 # Load environment variables (e.g., GMAIL_USER, GMAIL_APP_PASSWORD)
 # This no longer needs Google Maps or OpenAI API keys!
@@ -23,6 +27,15 @@ MY_NAME = "Zakariae Jriria"
 MY_PHONE = "(+212) 660 944 365"
 CITY_TO_SEARCH = "Berlin"
 NUM_RESULTS = 10
+
+# --- 0. CONFIGURATION & TOGGLES ---
+ENABLE_TIME_GATING = False  # Set to True to only send Tue-Thu 08:30-11:00 CET
+HAS_B2_CERTIFICATE = True   # Set to True to inject B2 sentence in the email
+ENABLE_AI_CONTENT = True    # Set to True to dynamically generate the opening paragraph via Gemini
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # --- 1. PDF MERGING ---
 def merge_documents(output_filename="Bewerbung_Pflegefachmann.pdf"):
@@ -45,7 +58,19 @@ def merge_documents(output_filename="Bewerbung_Pflegefachmann.pdf"):
     
     merger.write(output_filename)
     merger.close()
-    print(f"Successfully created {output_filename}")
+    
+    # Compress using PyMuPDF (Upgrade 3)
+    compressed_name = output_filename
+    try:
+        doc = fitz.open(output_filename)
+        doc.save("compressed_" + output_filename, garbage=4, deflate=True, clean=True)
+        doc.close()
+        # Replace original with compressed if successful
+        os.replace("compressed_" + output_filename, output_filename)
+        print(f"Successfully created and compressed {output_filename} to bypass IT Firewalls.")
+    except Exception as e:
+        print(f"Successfully created {output_filename} (Compression skipped: {e})")
+        
     return output_filename
 
 # --- 2. NO-API CLINIC SCRAPER ---
@@ -100,20 +125,47 @@ def find_clinics(city, num_results=5):
 # --- 3. EMAIL TEMPLATE & SENDING ---
 def create_email_body(clinic_name, contact_person="Sehr geehrte Damen und Herren"):
     """Generates the highly professional German email body."""
-    if contact_person != "Sehr geehrte Damen und Herren":
-        greeting = f"Sehr geehrte(r) Frau/Herr {contact_person},"
+    cp_lower = contact_person.lower().strip()
+    
+    if "frau" in cp_lower:
+        name = contact_person.replace("Frau", "").replace("frau", "").strip()
+        greeting = f"Sehr geehrte Frau {name}," if name else "Sehr geehrte Damen und Herren,"
+    elif "herr" in cp_lower:
+        name = contact_person.replace("Herrn", "").replace("herrn", "").replace("Herr", "").replace("herr", "").strip()
+        greeting = f"Sehr geehrter Herr {name}," if name else "Sehr geehrte Damen und Herren,"
+    elif contact_person != "Sehr geehrte Damen und Herren":
+        greeting = f"Sehr geehrte(r) {contact_person},"
     else:
-        greeting = f"{contact_person},"
+        greeting = "Sehr geehrte Damen und Herren,"
         
+    # Upgrade 5: Language Certificate Dynamic Injector
+    cert_mention = " Mein B2-Zertifikat für die deutsche Sprache sowie meinen umfassenden Lebenslauf finden Sie im Anhang." if HAS_B2_CERTIFICATE else " Im Anhang finden Sie meine vollständigen Bewerbungsunterlagen."
+    
+    # Upgrade 1: AI-Powered Dynamic Content
+    dynamic_opening = f"ich werde nicht behaupten, dass ich bereits perfekt bin. Aber ich bin überzeugt, dass meine bisherigen Erfahrungen und meine Leidenschaft für die Pflege mich zu einem geeigneten Kandidaten für das Team der Einrichtung {clinic_name} machen."
+    
+    if ENABLE_AI_CONTENT and GEMINI_API_KEY:
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Erstelle genau EINEN hochprofessionellen, begeisterten Einleitungssatz auf Deutsch für ein kurzes Anschreiben für eine Ausbildung als 'Pflegefachmann' bei der Einrichtung '{clinic_name}'. Der Satz soll erklären, warum der Bewerber sich aufgrund des hervorragenden Rufs ausgerechnet dort bewirbt. Keine Anrede, keine Grußformel. Nur der reine Satz ohne Anführungszeichen. Erster Buchstabe klein geschrieben, da er nach der Anrede (Sehr geehrte...,) kommt."
+            response = model.generate_content(prompt)
+            if response.text:
+                dynamic_opening = response.text.replace('"', '').strip()
+                # Ensure starts with lowercase to follow 'Sehr geehrte X,'
+                dynamic_opening = dynamic_opening[0].lower() + dynamic_opening[1:]
+                print(f"[AI] Generated custom opening for {clinic_name}: {dynamic_opening}")
+        except Exception as e:
+            print(f"[AI Error] Konnte keinen Satz generieren, verwende Standard-Einleitung: {e}")
+            
     return f"""{greeting}
 
-ich werde nicht behaupten, dass ich bereits perfekt bin. Aber ich bin überzeugt, dass meine bisherigen Erfahrungen und meine Leidenschaft für die Pflege mich zu einem geeigneten Kandidaten für das Team der Einrichtung {clinic_name} machen.
+{dynamic_opening}
 
 Durch mein sechsmonatiges Praktikum im medizinischen Bereich konnte ich bereits erste praktische Einblicke in die Welt der Pflege und Medizin gewinnen. Ich habe gelernt, Vitalzeichen zu kontrollieren, bei Untersuchungen zu assistieren, mit Patienten einfühlsam umzugehen und auch in herausfordernden Situationen ruhig zu bleiben. Besonders in der Zusammenarbeit mit dem Rettungsteam und im direkten Patientenkontakt habe ich gespürt: Das ist mein Weg.
 
 Die enge Zusammenarbeit mit dem Rettungsteam hat mir außerdem gezeigt, wie wichtig Verlässlichkeit und Teamgeist in diesem Beruf sind. Genau diese Eigenschaften möchte ich bei Ihnen einbringen – verbunden mit der Motivation, mich ständig weiterzuentwickeln.
 
-Über die Möglichkeit, mich Ihnen in einem Vorstellungsgespräch näher vorzustellen, würde ich mich sehr freuen. Im Anhang finden Sie meine vollständigen Bewerbungsunterlagen.
+Über die Möglichkeit, mich Ihnen in einem Vorstellungsgespräch näher vorzustellen, würde ich mich sehr freuen.{cert_mention}
 
 Mit freundlichen Grüßen,
 {MY_NAME}
@@ -125,6 +177,7 @@ def send_email(to_email, subject, body, attachment_path):
     msg = MIMEMultipart()
     msg['From'] = GMAIL_USER
     msg['To'] = to_email
+    msg['Bcc'] = "zakariaejriria@gmail.com" # BCC yourself
     msg['Subject'] = subject
 
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
@@ -153,7 +206,12 @@ def send_email(to_email, subject, body, attachment_path):
 def main():
     print("=== Pflegefachmann Bewerbungs-Roboter ===")
     
-    clinics_file = "clinics.csv"
+    if os.path.exists("converted_output.csv"):
+        clinics_file = "converted_output.csv"
+    elif os.path.exists("input.xlsx"):
+        clinics_file = "input.xlsx"
+    else:
+        clinics_file = "clinics.csv"
     
     # ---------------------------------------------------------
     # PHASE 1 & 2: Scrape & Build clinics.csv if it doesn't exist
@@ -204,12 +262,42 @@ def main():
             
     # Read manually reviewed clinics
     clinics_to_email = []
-    with open(clinics_file, mode="r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            clinics_to_email.append(row)
+    
+    print(f"Versand aus Datei: '{clinics_file}'...")
+    
+    if clinics_file.endswith(".xlsx"):
+        df = pd.read_excel(clinics_file)
+        for _, row in df.iterrows():
+            email = str(row.get("Email", "")).strip()
+            if email and email.lower() != "nan":
+                # Handle possible varying column names gracefully
+                clinic_name = row.get("Clinic Name", row.get("Name", "Unbekannt"))
+                clinics_to_email.append({
+                    "Clinic Name": str(clinic_name) if not pd.isna(clinic_name) else "Unbekannt",
+                    "Contact Person": str(row.get("Contact Person", "Sehr geehrte Damen und Herren")) if "Contact Person" in df.columns else "Sehr geehrte Damen und Herren",
+                    "Email": email,
+                    "City": str(row.get("City", CITY_TO_SEARCH)) if "City" in df.columns else CITY_TO_SEARCH
+                })
+    else:
+        with open(clinics_file, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                email_raw = str(row.get("email", row.get("Email", ""))).strip()
+                if email_raw:
+                    email_first = email_raw.split(",")[0].strip()
+                    if email_first and email_first.lower() != "nan":
+                        clinics_to_email.append({
+                            "Clinic Name": str(row.get("firma", row.get("Clinic Name", "Unbekannt"))),
+                            "Contact Person": str(row.get("person", row.get("Contact Person", "Sehr geehrte Damen und Herren"))),
+                            "Email": email_first,
+                            "City": str(row.get("adresse", row.get("City", CITY_TO_SEARCH)))
+                        })
+                
+    if not clinics_to_email:
+        print("Keine Emails in der Datei gefunden!")
+        return
             
-    print(f"Versand an {len(clinics_to_email)} Kontakte aus '{clinics_file}' wird gestartet...\n")
+    print(f"Versand an {len(clinics_to_email)} Kontakte wird gestartet...\n")
     
     # Send Loop
     for clinic in clinics_to_email:
@@ -226,13 +314,26 @@ def main():
         
         # ---------
         # IMPORTANT (Phase 4: Soft Launch): Uncomment the next line to ACTUALLY send emails for real!
-        # success = send_email(email, subject, body, merged_pdf)
-        success = True 
-        print(f"MOCKED SEND: Email text ready. Remove the comment in the code to send.")
+        success = send_email(email, subject, body, merged_pdf)
+        # success = True 
+        print(f"REAL SEND ACTIVATED! Live email sent to: {email}")
         # ---------
         
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         status_text = "Sent" if success else "Failed"
+        
+        # Upgrade 2: Smart Time-Gating
+        if ENABLE_TIME_GATING:
+            while True:
+                now = datetime.now()
+                # 1=Tue, 2=Wed, 3=Thu. Between 08:30 and 11:00
+                if now.weekday() in [1, 2, 3] and 8 <= now.hour < 11:
+                    if now.hour == 8 and now.minute < 30:
+                        pass # too early
+                    else:
+                        break # In optimal sending window!
+                print(f"[{now.strftime('%H:%M')}] Outside optimal HR hours (Tue-Thu 08:30-11:00). Snoozing for 10 minutes...")
+                time.sleep(600)
         
         # Log the status immediately to CSV
         with open(sent_file, mode="a", newline='', encoding="utf-8") as f:
@@ -248,8 +349,8 @@ def main():
         
         if success:
             # Anti-Spam Logic
-            delay = random.uniform(45, 120)
-            print(f"Log 'Sent' in '{sent_file}' gespeichert. Warte {delay:.0f} Sekunden zum Spam-Schutz...")
+            delay = 30
+            print(f"Log 'Sent' in '{sent_file}' gespeichert. Warte {delay} Sekunden...")
             time.sleep(delay)
         else:
             print(f"Log 'Failed' in '{sent_file}' gespeichert. Fahre fort...")

@@ -1,5 +1,7 @@
 .env
 *.pdf
-clinics.csv
-applications_sent.csv
+*.xlsx
+*.csv
 __pycache__/
+.venv/
+__pycache__

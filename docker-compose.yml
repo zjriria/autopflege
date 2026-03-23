@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build: .
+    container_name: pflegefachmann_dashboard
+    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  bot:
+    build: .
+    container_name: pflegefachmann_bot
+    # Automatically run the entire 3-stage pipeline
+    command: bash run_all.sh
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
