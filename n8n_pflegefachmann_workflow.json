@@ -1,0 +1,144 @@
+{
+  "name": "Pflegefachmann Application Automated Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "When clicking \"Test Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/place/textsearch/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "Krankenhaus OR Pflegeheim in Berlin"
+            },
+            {
+              "name": "key",
+              "value": "YOUR_GOOGLE_MAPS_API_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2",
+      "name": "Find Institutions via Google Maps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.item.json.results || [];\nlet items = [];\nfor (const place of results) {\n  // In reality, Google Maps doesn't return emails directly.\n  // This is a placeholder domain mapping logic.\n  let name = place.name;\n  items.push({\n    json: {\n      institutionName: name,\n      email: \"bewerbung@\" + name.toLowerCase().replace(/\\s+/g, '') + \".de\"\n    }\n  });\n}\nreturn items;"
+      },
+      "id": "3",
+      "name": "Extract Items (Code)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=\"Schreibe ein kurzes, professionelles Anschreiben für eine Ausbildung als Pflegefachmann an das \" + $json.institutionName + \". Das Anschreiben sollte motiviert, freundlich und höflich sein. Schreibe nur den Text, ohne Platzhalter, unterschreibe mit 'Mit freundlichen Grüßen, Dein Name'.\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4",
+      "name": "OpenAI - Draft Cover Letter",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=\"Bewerbung für einen Ausbildungsplatz als Pflegefachmann - \" + $json.institutionName",
+        "message": "={{ $json.message.content }}",
+        "options": {}
+      },
+      "id": "5",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1050,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking \"Test Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Find Institutions via Google Maps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Institutions via Google Maps": {
+      "main": [
+        [
+          {
+            "node": "Extract Items (Code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Items (Code)": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Draft Cover Letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Draft Cover Letter": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+}

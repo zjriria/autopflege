@@ -1,0 +1,5 @@
+.env
+*.pdf
+clinics.csv
+applications_sent.csv
+__pycache__/
